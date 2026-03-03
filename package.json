@@ -1,0 +1,10 @@
+{
+  "name": "healing-timeline-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "npx serve -l 4567",
+    "dev": "npx serve -l 4567",
+    "serve:python": "python -m http.server 4567"
+  }
+}

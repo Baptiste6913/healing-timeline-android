@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Healing Timeline — Rhinovate</title>
+
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#00b4d8">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Healing Timeline">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Three.js import map -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+
+    <!-- ════════ DISCLAIMER MODAL ════════ -->
+    <div id="disclaimer-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-icon">&#9888;</div>
+            <h2>Important Notice</h2>
+            <p><strong>Not Medical Advice.</strong> This application provides illustrative simulations only. It does not provide medical advice, diagnosis, or treatment.</p>
+            <p><strong>Simulation Limitations.</strong> The healing timeline is based on population averages from published literature. Individual recovery varies significantly.</p>
+            <p><strong>Consult Your Surgeon.</strong> Always consult a qualified healthcare provider for your specific recovery.</p>
+            <p><strong>Privacy.</strong> All processing happens locally in your browser. No data is sent anywhere.</p>
+            <button id="disclaimer-ok" class="btn-primary">I Understand</button>
+        </div>
+    </div>
+
+    <!-- ════════ SCREEN: SPLASH ════════ -->
+    <div id="screen-splash" class="screen active">
+        <div class="splash-content">
+            <div class="logo-area">
+                <div class="logo-icon">&#x1F4C8;</div>
+                <h1>Healing Timeline</h1>
+                <p class="subtitle">by Rhinovate</p>
+            </div>
+            <p class="tagline">Visualize your recovery journey</p>
+
+            <div id="loading-status" class="loading-status">Loading face detection model...</div>
+            <div id="depth-status" class="depth-status"></div>
+
+            <button id="start-btn" class="btn-primary btn-large" disabled>Start Face Scan</button>
+            <button id="demo-btn" class="btn-secondary">Use Sample Mesh (Demo)</button>
+        </div>
+    </div>
+
+    <!-- ════════ SCREEN: SCAN ════════ -->
+    <div id="screen-scan" class="screen">
+        <div class="scan-container">
+            <!-- Back button -->
+            <button id="scan-back-btn" class="btn-icon btn-back">&times;</button>
+
+            <!-- Camera feed -->
+            <video id="camera-video" playsinline autoplay muted></video>
+            <canvas id="camera-overlay"></canvas>
+
+            <!-- Face guide oval -->
+            <div id="face-guide" class="face-guide">
+                <div class="face-oval"></div>
+            </div>
+
+            <!-- Instruction -->
+            <div class="scan-bottom">
+                <div id="scan-instruction" class="scan-instruction">Position your face in the frame</div>
+
+                <button id="capture-btn" class="capture-button" disabled>
+                    <span class="capture-ring"></span>
+                    <span class="capture-inner"></span>
+                    <span class="capture-label">Capture<br>Now</span>
+                </button>
+            </div>
+
+            <!-- Zone labels during scan -->
+            <div class="scan-legend">
+                <span class="legend-inline"><span class="dot" style="background:#ff3333"></span> Nose Tip</span>
+                <span class="legend-inline"><span class="dot" style="background:#ffbf00"></span> Alar</span>
+                <span class="legend-inline"><span class="dot" style="background:#8033cc"></span> Periorbital</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════ SCREEN: PROCESSING ════════ -->
+    <div id="screen-processing" class="screen">
+        <div class="processing-content">
+            <div class="spinner"></div>
+            <h2>Processing your scan...</h2>
+            <p id="processing-detail">Building 3D mesh and preparing simulation</p>
+        </div>
+    </div>
+
+    <!-- ════════ SCREEN: VIEWER ════════ -->
+    <div id="screen-viewer" class="screen">
+        <div class="viewer-layout">
+
+            <!-- Top bar -->
+            <div class="viewer-topbar">
+                <button id="viewer-back-btn" class="btn-text">&larr; New Scan</button>
+                <div class="viewer-stats">
+                    <div class="stat">
+                        <span class="stat-label">Swelling</span>
+                        <span id="swell-pct" class="stat-value high">100%</span>
+                    </div>
+                    <div class="stat" id="bruise-row">
+                        <span id="bruise-dot" class="bruise-dot"></span>
+                        <span class="stat-label">Bruising</span>
+                        <span id="bruise-pct" class="stat-value">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Day label + clinical milestone -->
+            <div class="day-label-row">
+                <h2 id="day-label">Surgery Day</h2>
+                <p id="day-milestone" class="day-milestone">Cast/splint in place</p>
+            </div>
+
+            <!-- 3D Canvas -->
+            <div id="viewer-canvas" class="viewer-canvas"></div>
+
+            <!-- Timeline controls -->
+            <div class="timeline-controls">
+
+                <!-- Slider -->
+                <div class="slider-row">
+                    <input type="range" id="timeline-slider" min="0" max="365" step="1" value="0">
+                    <div class="slider-labels">
+                        <span>Surgery</span>
+                        <span>12 months</span>
+                    </div>
+                </div>
+
+                <!-- Preset buttons -->
+                <div class="preset-row">
+                    <button class="preset-btn active" data-day="0">Surgery</button>
+                    <button class="preset-btn" data-day="1">Day 1</button>
+                    <button class="preset-btn" data-day="3">Day 3</button>
+                    <button class="preset-btn" data-day="7">1 wk</button>
+                    <button class="preset-btn" data-day="14">2 wk</button>
+                    <button class="preset-btn" data-day="30">1 mo</button>
+                    <button class="preset-btn" data-day="90">3 mo</button>
+                    <button class="preset-btn" data-day="180">6 mo</button>
+                    <button class="preset-btn" data-day="365">1 yr</button>
+                </div>
+
+                <!-- Options row -->
+                <div class="options-row">
+                    <div class="option-group">
+                        <label>Approach</label>
+                        <select id="opt-approach">
+                            <option value="open" selected>Open</option>
+                            <option value="closed">Closed</option>
+                        </select>
+                    </div>
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="opt-osteotomy" checked>
+                            Osteotomy
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label>Skin</label>
+                        <select id="opt-skin">
+                            <option value="thin">Thin</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="thick">Thick</option>
+                        </select>
+                    </div>
+                    <div class="option-group">
+                        <label>Intensity</label>
+                        <select id="opt-intensity">
+                            <option value="low">Low</option>
+                            <option value="medium" selected>Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="options-row" style="margin-top:6px">
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="opt-bruising" checked>
+                            Bruising
+                        </label>
+                    </div>
+                    <div class="option-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="zone-toggle">
+                            Show Zones
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Zone legend (hidden by default) -->
+                <div id="zone-legend" class="zone-legend" style="display:none"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/face-zones.js"></script>
+    <script src="js/healing-model.js"></script>
+    <script type="module" src="js/app.js"></script>
+
+    <!-- Service Worker registration -->
+    <script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js').catch(() => {});
+        });
+    }
+    </script>
+
+</body>
+</html>
