@@ -551,8 +551,17 @@ body {
         env(safe-area-inset-left);
 }
 
+/* Android Chrome: use dvh for correct viewport height (avoids address bar issues) */
+@supports (height: 100dvh) {
+    body, .screen { height: 100dvh; }
+}
+
 /* Prevent pull-to-refresh and overscroll on Android */
 html, body { overscroll-behavior: none; }
+
+/* Prevent long-press context menu on Android */
+* { -webkit-touch-callout: none; }
+img, canvas, video { pointer-events: auto; }
 
 /* Touch-friendly: prevent 300ms tap delay */
 a, button, input, select, label { touch-action: manipulation; }
@@ -577,22 +586,48 @@ a, button, input, select, label { touch-action: manipulation; }
     border: none;
 }
 
-/* Select elements on Android: ensure readable */
+/* Android Chrome range thumb fix */
+.slider-row input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 24px;
+    height: 24px;
+    background: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    margin-top: -9px; /* center on track */
+}
+.slider-row input[type="range"]::-webkit-slider-runnable-track {
+    height: 6px;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 3px;
+}
+
+/* Select elements on Android: native picker + readable */
 .option-group select {
     -webkit-appearance: none;
     appearance: none;
-    min-height: 36px;
-    padding: 6px 10px;
+    min-height: 40px;
+    padding: 8px 12px;
+    font-size: 14px;
+    /* Triangle indicator */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 28px;
 }
 
 /* Larger touch targets on small screens */
 @media (max-width: 480px) {
-    .preset-btn { padding: 9px 12px; font-size: 13px; min-height: 36px; }
-    .option-group select { min-height: 40px; font-size: 14px; }
-    .checkbox-label { min-height: 36px; }
-    .btn-icon { width: 44px; height: 44px; }
+    .preset-btn { padding: 10px 14px; font-size: 13px; min-height: 40px; }
+    .option-group select { min-height: 44px; font-size: 15px; }
+    .checkbox-label { min-height: 40px; font-size: 14px; }
+    .btn-icon { width: 48px; height: 48px; font-size: 22px; }
     .scan-bottom { padding-bottom: calc(32px + env(safe-area-inset-bottom)); }
     .timeline-controls { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+    .capture-button { width: 80px; height: 80px; }
+    .viewer-topbar { padding: 10px 12px; }
+    .day-label-row h2 { font-size: 22px; }
 }
 
 /* ── Responsive ────────────────────────────────────────────────────── */

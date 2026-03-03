@@ -30,7 +30,7 @@ let zoneWeights = null;
 
 // Multi-frame averaging for stable landmarks
 let landmarkBuffer = [];
-const FRAME_BUFFER_SIZE = 8;
+const FRAME_BUFFER_SIZE = 5; // Reduced from 8 for Android memory
 
 // Three.js
 let scene, threeCamera, renderer, controls;
@@ -101,16 +101,35 @@ async function initMediaPipe() {
             'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm'
         );
 
-        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-            baseOptions: {
-                modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-                delegate: 'GPU'
-            },
-            runningMode: 'VIDEO',
-            numFaces: 1,
-            outputFacialTransformationMatrixes: true,
-            outputFaceBlendshapes: false,
-        });
+        // Try GPU first, fallback to CPU if it fails (common on budget Android)
+        let delegate = 'GPU';
+        try {
+            faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                baseOptions: {
+                    modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+                    delegate: 'GPU'
+                },
+                runningMode: 'VIDEO',
+                numFaces: 1,
+                outputFacialTransformationMatrixes: true,
+                outputFaceBlendshapes: false,
+            });
+            console.log('[MediaPipe] Using GPU delegate');
+        } catch (gpuErr) {
+            console.warn('[MediaPipe] GPU delegate failed, falling back to CPU:', gpuErr.message);
+            delegate = 'CPU';
+            faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+                baseOptions: {
+                    modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+                    delegate: 'CPU'
+                },
+                runningMode: 'VIDEO',
+                numFaces: 1,
+                outputFacialTransformationMatrixes: true,
+                outputFaceBlendshapes: false,
+            });
+            console.log('[MediaPipe] Using CPU delegate (fallback)');
+        }
 
         // Extract tessellation for mesh building (check both spellings)
         const tessData = FaceLandmarker.FACE_LANDMARKS_TESSELATION
@@ -126,13 +145,22 @@ async function initMediaPipe() {
             console.warn('[MediaPipe] No tessellation data — will use fallback');
         }
 
-        statusEl.textContent = depthModelReady
-            ? 'Ready! (with AI depth)'
-            : 'Ready! (loading AI depth...)';
+        if (isMobileDevice()) {
+            statusEl.textContent = `Ready! (${delegate} mode)`;
+        } else {
+            statusEl.textContent = depthModelReady
+                ? 'Ready! (with AI depth)'
+                : 'Ready! (loading AI depth...)';
+        }
         document.getElementById('start-btn').disabled = false;
     } catch (err) {
         console.error('[MediaPipe] Init failed:', err);
-        statusEl.textContent = 'Failed to load model. Check internet connection.';
+        statusEl.textContent = 'Model load failed. Check connection & try again.';
+        // On Android, offer demo mode as fallback
+        if (isMobileDevice()) {
+            document.getElementById('demo-btn').style.display = 'block';
+            document.getElementById('demo-btn').textContent = '→ Use Demo Mode (no camera needed)';
+        }
     }
 }
 
@@ -323,19 +351,80 @@ async function startCamera() {
     }
 
     try {
-        // Adaptive resolution: high on desktop, moderate on mobile to avoid memory crashes
+        // ── ANDROID-COMPATIBLE CAMERA SETUP ──
+        // Android Chrome is picky about getUserMedia constraints.
+        // Strategy: try ideal constraints first, then progressively relax.
         const mobile = isMobileDevice();
-        const idealW = mobile ? 1280 : 1920;
-        const idealH = mobile ? 720 : 1080;
-        videoStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', width: { ideal: idealW }, height: { ideal: idealH } }
-        });
-        video.srcObject = videoStream;
-        await video.play();
+        const android = isAndroid();
+        const lowEnd = isLowEndDevice();
 
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        console.log(`[Camera] Resolution: ${video.videoWidth}×${video.videoHeight}`);
+        // Resolution: lower on low-end, moderate on mobile, high on desktop
+        const idealW = lowEnd ? 640 : (mobile ? 1280 : 1920);
+        const idealH = lowEnd ? 480 : (mobile ? 720 : 1080);
+
+        let stream = null;
+        const constraints = [
+            // Try 1: standard constraints with ideal resolution
+            { video: { facingMode: 'user', width: { ideal: idealW }, height: { ideal: idealH } } },
+            // Try 2: Android sometimes needs exact facingMode
+            { video: { facingMode: { exact: 'user' }, width: { ideal: idealW }, height: { ideal: idealH } } },
+            // Try 3: minimal constraints (just front camera)
+            { video: { facingMode: 'user' } },
+            // Try 4: absolute minimum (any camera)
+            { video: true },
+        ];
+
+        for (let i = 0; i < constraints.length; i++) {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints[i]);
+                console.log(`[Camera] Opened with constraint set ${i + 1}`);
+                break;
+            } catch (e) {
+                console.warn(`[Camera] Constraint set ${i + 1} failed:`, e.message);
+                if (i === constraints.length - 1) throw e; // last one → propagate
+            }
+        }
+
+        videoStream = stream;
+        video.srcObject = stream;
+
+        // Android Chrome sometimes needs muted + playsinline explicitly
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('playsinline', '');
+        video.setAttribute('muted', '');
+
+        // video.play() can reject on Android if autoplay is blocked
+        try {
+            await video.play();
+        } catch (playErr) {
+            console.warn('[Camera] Auto-play blocked, waiting for user gesture:', playErr.message);
+            instructionEl.textContent = 'Tap anywhere to start camera';
+            await new Promise(resolve => {
+                const handler = () => {
+                    document.removeEventListener('touchstart', handler);
+                    document.removeEventListener('click', handler);
+                    video.play().then(resolve).catch(resolve);
+                };
+                document.addEventListener('touchstart', handler, { once: true });
+                document.addEventListener('click', handler, { once: true });
+            });
+        }
+
+        // Wait for video to actually have dimensions (Android can be slow)
+        await new Promise((resolve) => {
+            if (video.videoWidth > 0) return resolve();
+            const checkReady = () => {
+                if (video.videoWidth > 0) resolve();
+                else setTimeout(checkReady, 100);
+            };
+            video.addEventListener('loadedmetadata', () => checkReady(), { once: true });
+            setTimeout(checkReady, 200);
+        });
+
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        console.log(`[Camera] Resolution: ${video.videoWidth}×${video.videoHeight} (${android ? 'Android' : 'other'})`);
 
         // Reset frame buffer for multi-frame averaging
         landmarkBuffer = [];
@@ -344,7 +433,7 @@ async function startCamera() {
     } catch (err) {
         console.error('[Camera]', err);
         if (err.name === 'NotAllowedError') {
-            showCameraError(instructionEl, 'Camera access denied. Please allow camera in browser settings.');
+            showCameraError(instructionEl, 'Camera access denied. Allow camera in browser settings, then reload.');
         } else if (err.name === 'NotFoundError') {
             showCameraError(instructionEl, 'No camera found on this device.');
         } else if (err.name === 'NotReadableError') {
@@ -1170,6 +1259,26 @@ function isMobileDevice() {
 }
 
 /**
+ * Detect Android specifically (for Android-only workarounds).
+ */
+function isAndroid() {
+    return /Android/i.test(navigator.userAgent);
+}
+
+/**
+ * Detect low-end device by checking available memory or GPU info.
+ */
+function isLowEndDevice() {
+    // Check device memory API (Chrome 63+)
+    if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
+    // Check hardware concurrency (CPU cores)
+    if (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) return true;
+    // Small screen = likely budget device
+    if (window.innerWidth < 400 && isMobileDevice()) return true;
+    return false;
+}
+
+/**
  * Update the processing screen status text.
  */
 function updateProcessingStatus(msg) {
@@ -1660,55 +1769,79 @@ function initViewer() {
     threeCamera = new THREE.PerspectiveCamera(35, w / h, 0.001, 10);
     threeCamera.position.set(0, 0, 0.35);
 
+    // Android: limit antialias and pixelRatio to avoid GPU overload
+    const mobile = isMobileDevice();
+    const lowEnd = isLowEndDevice();
+
     renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: !lowEnd,   // Disable AA on low-end Android
         alpha: false,
-        powerPreference: 'high-performance',
+        powerPreference: mobile ? 'default' : 'high-performance',
+        failIfMajorPerformanceCaveat: false, // Don't fail on software renderer
     });
     renderer.setSize(w, h);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.5));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // Android: cap pixelRatio at 2 (many Android phones report 3+)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 2 : 2.5));
+    renderer.toneMapping = lowEnd ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(renderer.domElement);
 
     controls = new OrbitControls(threeCamera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
+    controls.dampingFactor = mobile ? 0.12 : 0.08; // More damping on touch = smoother
     controls.target.set(0, 0, 0);
     controls.minDistance = 0.05;
     controls.maxDistance = 2;
-    controls.enablePan = true;
+    controls.enablePan = !mobile; // Disable pan on mobile (confusing with swipe)
+    controls.rotateSpeed = mobile ? 0.6 : 1.0; // Slower rotation on touch
+    controls.zoomSpeed = mobile ? 0.8 : 1.0;
+    if (mobile) {
+        controls.touches = {
+            ONE: THREE.TOUCH.ROTATE,
+            TWO: THREE.TOUCH.DOLLY_ROTATE  // pinch to zoom + rotate
+        };
+    }
 
-    // ── STUDIO-QUALITY LIGHTING ──
-    // Key light (front, slightly elevated and offset)
-    const keyLight = new THREE.DirectionalLight(0xfff5ee, 2.0);
-    keyLight.position.set(0.3, 0.4, 1);
-    scene.add(keyLight);
-
-    // Fill light (softer, from opposite side)
-    const fillLight = new THREE.DirectionalLight(0xe8e0f0, 1.0);
-    fillLight.position.set(-0.5, 0.2, 0.8);
-    scene.add(fillLight);
-
-    // Rim light (from behind, for edge definition)
-    const rimLight = new THREE.DirectionalLight(0xffffff, 0.6);
-    rimLight.position.set(0, 0.3, -0.8);
-    scene.add(rimLight);
-
-    // Top light (simulates overhead/ceiling)
-    const topLight = new THREE.DirectionalLight(0xffffff, 0.4);
-    topLight.position.set(0, 1, 0.3);
-    scene.add(topLight);
-
-    // Bottom bounce (warm uplight for chin/neck area)
-    const bounceLight = new THREE.DirectionalLight(0xffe8d0, 0.3);
-    bounceLight.position.set(0, -0.5, 0.5);
-    scene.add(bounceLight);
-
-    // Ambient + hemisphere for natural falloff
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    scene.add(new THREE.HemisphereLight(0xffeedd, 0x334466, 0.4));
+    // ── LIGHTING (adaptive: fewer lights on mobile to save GPU) ──
+    if (lowEnd) {
+        // Low-end Android: just 2 lights + ambient
+        const keyLight = new THREE.DirectionalLight(0xfff5ee, 2.5);
+        keyLight.position.set(0.3, 0.4, 1);
+        scene.add(keyLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    } else if (mobile) {
+        // Mid-range mobile: 3 lights + ambient
+        const keyLight = new THREE.DirectionalLight(0xfff5ee, 2.0);
+        keyLight.position.set(0.3, 0.4, 1);
+        scene.add(keyLight);
+        const fillLight = new THREE.DirectionalLight(0xe8e0f0, 0.8);
+        fillLight.position.set(-0.5, 0.2, 0.8);
+        scene.add(fillLight);
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        rimLight.position.set(0, 0.3, -0.8);
+        scene.add(rimLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    } else {
+        // Desktop: full studio lighting
+        const keyLight = new THREE.DirectionalLight(0xfff5ee, 2.0);
+        keyLight.position.set(0.3, 0.4, 1);
+        scene.add(keyLight);
+        const fillLight = new THREE.DirectionalLight(0xe8e0f0, 1.0);
+        fillLight.position.set(-0.5, 0.2, 0.8);
+        scene.add(fillLight);
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        rimLight.position.set(0, 0.3, -0.8);
+        scene.add(rimLight);
+        const topLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        topLight.position.set(0, 1, 0.3);
+        scene.add(topLight);
+        const bounceLight = new THREE.DirectionalLight(0xffe8d0, 0.3);
+        bounceLight.position.set(0, -0.5, 0.5);
+        scene.add(bounceLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        scene.add(new THREE.HemisphereLight(0xffeedd, 0x334466, 0.4));
+    }
 
     const resizeViewer = () => {
         const rw = container.clientWidth, rh = container.clientHeight;
@@ -1956,19 +2089,41 @@ function buildFaceMesh(day) {
             capturedTexture.generateMipmaps = true;
         }
 
-        const mat = new THREE.MeshPhysicalMaterial({
-            map: useTexture ? capturedTexture : null,
-            vertexColors: true,
-            roughness: 0.48,             // Slightly smoother = more realistic skin
-            metalness: 0.0,
-            clearcoat: 0.06,             // Subtle skin sheen (oily T-zone)
-            clearcoatRoughness: 0.75,
-            sheen: 0.4,                  // Subsurface scattering approximation
-            sheenRoughness: 0.7,
-            sheenColor: new THREE.Color(0.95, 0.65, 0.55),  // Warm skin undertone
-            side: THREE.DoubleSide,
-            flatShading: false,
-        });
+        // Use lighter material on mobile/Android to avoid GPU stalls
+        let mat;
+        if (isLowEndDevice()) {
+            // Low-end: basic Phong-like material (fast)
+            mat = new THREE.MeshLambertMaterial({
+                map: useTexture ? capturedTexture : null,
+                vertexColors: true,
+                side: THREE.DoubleSide,
+            });
+        } else if (isMobileDevice()) {
+            // Mid-range mobile: MeshStandardMaterial (no clearcoat/sheen)
+            mat = new THREE.MeshStandardMaterial({
+                map: useTexture ? capturedTexture : null,
+                vertexColors: true,
+                roughness: 0.55,
+                metalness: 0.0,
+                side: THREE.DoubleSide,
+                flatShading: false,
+            });
+        } else {
+            // Desktop: full MeshPhysicalMaterial
+            mat = new THREE.MeshPhysicalMaterial({
+                map: useTexture ? capturedTexture : null,
+                vertexColors: true,
+                roughness: 0.48,
+                metalness: 0.0,
+                clearcoat: 0.06,
+                clearcoatRoughness: 0.75,
+                sheen: 0.4,
+                sheenRoughness: 0.7,
+                sheenColor: new THREE.Color(0.95, 0.65, 0.55),
+                side: THREE.DoubleSide,
+                flatShading: false,
+            });
+        }
 
         faceMesh = new THREE.Mesh(geo, mat);
         faceMesh.name = 'faceMesh';

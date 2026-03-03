@@ -1,4 +1,4 @@
-"""Local WiFi server — open the link on your iPhone to test."""
+"""Local WiFi server — open the link on your Android/iPhone to test."""
 import http.server
 import socketserver
 import ssl
@@ -47,12 +47,11 @@ def get_local_ip():
 
 
 def generate_self_signed_cert():
-    """Generate a temporary self-signed SSL cert for HTTPS (needed for camera on iPhone)."""
+    """Generate a temporary self-signed SSL cert for HTTPS (needed for camera access)."""
     cert_dir = tempfile.mkdtemp()
     cert_file = os.path.join(cert_dir, "cert.pem")
     key_file = os.path.join(cert_dir, "key.pem")
 
-    # Use openssl to generate cert
     try:
         local_ip = get_local_ip()
         subprocess.run([
@@ -72,11 +71,10 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 local_ip = get_local_ip()
 
-# Try HTTPS first (required for camera access on iPhone over network)
+# Try HTTPS first (required for camera access on mobile over network)
 cert_file, key_file = generate_self_signed_cert()
 
 if cert_file and key_file:
-    # HTTPS server
     httpd = socketserver.TCPServer(("0.0.0.0", PORT), Handler)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert_file, key_file)
@@ -84,37 +82,39 @@ if cert_file and key_file:
 
     print()
     print("=" * 60)
-    print("  HEALING TIMELINE — Local Server (HTTPS)")
+    print("  HEALING TIMELINE — Serveur Local (HTTPS)")
     print("=" * 60)
     print()
-    print(f"  Ouvre ce lien sur ton iPhone :")
+    print(f"  Ouvre ce lien sur ton telephone :")
     print()
     print(f"    https://{local_ip}:{PORT}")
     print()
-    print(f"  Safari va afficher un avertissement de securite.")
-    print(f"  Clique 'Avance' > 'Continuer vers le site'")
-    print(f"  (c'est normal, c'est ton propre PC)")
+    print(f"  ANDROID (Chrome) :")
+    print(f"    → 'Parametres avances' > 'Continuer'")
     print()
-    print(f"  PC et iPhone doivent etre sur le meme WiFi !")
+    print(f"  iPHONE (Safari) :")
+    print(f"    → 'Afficher les details' > 'Visiter le site'")
+    print()
+    print(f"  (c'est normal, c'est ton propre PC)")
+    print(f"  PC et telephone doivent etre sur le meme WiFi !")
     print("=" * 60)
     print()
 else:
-    # Fallback HTTP (camera won't work on iPhone but demo mode will)
     httpd = socketserver.TCPServer(("0.0.0.0", PORT), Handler)
 
     print()
     print("=" * 60)
-    print("  HEALING TIMELINE — Local Server (HTTP)")
+    print("  HEALING TIMELINE — Serveur Local (HTTP)")
     print("=" * 60)
     print()
-    print(f"  Ouvre ce lien sur ton iPhone :")
+    print(f"  Ouvre ce lien sur ton telephone :")
     print()
     print(f"    http://{local_ip}:{PORT}")
     print()
     print(f"  NOTE: La camera ne marchera pas en HTTP.")
-    print(f"  Utilise le bouton 'Use Sample Mesh (Demo)' a la place.")
+    print(f"  Utilise 'Use Sample Mesh (Demo)' a la place.")
     print()
-    print(f"  PC et iPhone doivent etre sur le meme WiFi !")
+    print(f"  PC et telephone doivent etre sur le meme WiFi !")
     print("=" * 60)
     print()
 
